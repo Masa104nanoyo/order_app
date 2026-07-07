@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>発注管理システム | レイズラボ株式会社</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <nav class="sidenav">
+    <div class="sidenav__brand">発注管理システム</div>
+    <div class="sidenav__nav">
+      <button class="sidenav__link" data-page="dashboard">ダッシュボード</button>
+      <button class="sidenav__link" data-page="order-form">発注書作成</button>
+      <button class="sidenav__link" data-page="order-history">発注履歴</button>
+      <button class="sidenav__link" data-page="master">マスタ管理</button>
+    </div>
+  </nav>
+  <main class="main" id="mainContent"></main>
+</div>
+
+<!-- 共通ユーティリティ（依存関係の順に読み込み） -->
+<script src="js/helpers.js"></script>
+<script src="js/api-config.js"></script>
+<script src="js/api-client.js"></script>
+<script src="js/draft-store.js"></script>
+<script src="js/toast.js"></script>
+<script src="js/order-type-defs.js"></script>
+
+<!-- 画面 -->
+<script src="js/page-dashboard.js"></script>
+<script src="js/page-order-form.js"></script>
+<script src="js/page-order-history.js"></script>
+<script src="js/page-master.js"></script>
+
+<!-- ルーター（最後に読み込み、初期化を実行） -->
+<script src="js/router.js"></script>
+<script>
+  Router.init();
+</script>
+</body>
+</html>
