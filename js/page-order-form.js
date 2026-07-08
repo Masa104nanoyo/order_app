@@ -256,32 +256,97 @@ const OrderFormPage = (function () {
       '</div>';
   }
 
-  function renderHeaderFields_(def) {
-    const supplierOptions = state.masters.suppliers.map(function (s) {
-      const tag = s.usage_count_90d > 0 ? '（よく使用）' : '';
-      return '<option value="' + s.supplier_id + '"' + (s.supplier_id === state.header.supplier_id ? ' selected' : '') + '>' + escapeHtml(s.company_name) + tag + '</option>';
-    }).join('');
+  /**
+   * 汎用: マスタ検索オートコンプリート付きテキスト入力をバインドする。
+   * ドロップダウン選択に加えて、部分一致した候補をリスト表示し選択できるようにする。
+   * fetchFn(keyword) -> Promise<items[]>、renderLabelFn(item) -> 表示文字列、onSelectFn(item) -> 選択時の処理。
+   */
+  function attachMasterAutocomplete_(inputEl, fetchFn, renderLabelFn, onSelectFn) {
+    let box = null;
+    let debounceTimer = null;
 
+    function removeBox_() {
+      if (box) { box.remove(); box = null; }
+    }
+
+    function showSuggestions_(items) {
+      removeBox_();
+      if (!items || items.length === 0) return;
+      box = document.createElement('div');
+      box.style.position = 'absolute';
+      box.style.background = '#fff';
+      box.style.border = '1px solid #ccc';
+      box.style.zIndex = '200';
+      box.style.maxHeight = '200px';
+      box.style.overflowY = 'auto';
+      box.style.fontSize = '13px';
+      box.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+      const rect = inputEl.getBoundingClientRect();
+      box.style.left = (rect.left + window.scrollX) + 'px';
+      box.style.top = (rect.bottom + window.scrollY) + 'px';
+      box.style.width = Math.max(rect.width, 260) + 'px';
+
+      items.slice(0, 12).forEach(function (item) {
+        const line = document.createElement('div');
+        line.style.padding = '6px 8px';
+        line.style.cursor = 'pointer';
+        line.style.borderBottom = '1px solid #f0f0f0';
+        line.textContent = renderLabelFn(item);
+        line.addEventListener('mouseenter', function () { line.style.background = '#F5F6F8'; });
+        line.addEventListener('mouseleave', function () { line.style.background = '#fff'; });
+        line.addEventListener('mousedown', function (ev) {
+          ev.preventDefault(); // blurより先にmousedownを処理させ、候補選択を確実にする
+          onSelectFn(item);
+          removeBox_();
+        });
+        box.appendChild(line);
+      });
+      document.body.appendChild(box);
+    }
+
+    inputEl.addEventListener('input', function () {
+      const keyword = inputEl.value;
+      clearTimeout(debounceTimer);
+      if (!keyword) { removeBox_(); return; }
+      debounceTimer = setTimeout(function () {
+        fetchFn(keyword).then(showSuggestions_);
+      }, 200);
+    });
+    inputEl.addEventListener('focus', function () {
+      if (inputEl.value) fetchFn(inputEl.value).then(showSuggestions_);
+    });
+    inputEl.addEventListener('blur', function () {
+      setTimeout(removeBox_, 150);
+    });
+  }
+
+  function renderHeaderFields_(def) {
     const employeeOptions = state.masters.employees.map(function (e) {
       return '<option value="' + e.employee_id + '"' + (e.employee_id === state.header.employee_id ? ' selected' : '') + '>' + escapeHtml(e.employee_name) + '</option>';
     }).join('');
 
-    const deliveryOptions = state.masters.deliveryPoints.map(function (d) {
-      return '<option value="' + d.delivery_point_id + '"' + (d.delivery_point_id === state.header.delivery_point_id ? ' selected' : '') + '>' + escapeHtml(d.company_name) + '</option>';
-    }).join('');
+    const currentSupplier = state.masters.suppliers.find(function (s) { return s.supplier_id === state.header.supplier_id; });
+    const currentDelivery = state.masters.deliveryPoints.find(function (d) { return d.delivery_point_id === state.header.delivery_point_id; });
 
     return '<div class="form-grid">' +
       '<div><label>発注日</label><input type="date" id="f_order_date" value="' + (state.header.order_date || '') + '"></div>' +
       '<div><label>希望納期</label><input type="date" id="f_due_date" value="' + (state.header.due_date || '') + '"></div>' +
-      '<div><label>発注先</label><select id="f_supplier_id"><option value="">選択してください</option>' + supplierOptions + '</select></div>' +
+      '<div style="position:relative;"><label>発注先（入力すると候補が出ます）</label>' +
+      '<input type="text" id="f_supplier_search" value="' + escapeHtml(currentSupplier ? currentSupplier.company_name : '') + '" placeholder="会社名を入力" autocomplete="off">' +
+      '<input type="hidden" id="f_supplier_id" value="' + (state.header.supplier_id || '') + '">' +
+      '</div>' +
       '<div><label>発注先担当者</label><select id="f_supplier_contact_id"><option value="">（発注先を選択後に表示）</option></select></div>' +
       '<div><label>発注者</label><select id="f_employee_id"><option value="">選択してください</option>' + employeeOptions + '</select></div>' +
-      '<div><label>納品先</label><select id="f_delivery_point_id"><option value="">選択してください</option>' + deliveryOptions + '</select></div>' +
+      '<div style="position:relative;"><label>納品先（入力すると候補が出ます）</label>' +
+      '<input type="text" id="f_delivery_search" value="' + escapeHtml(currentDelivery ? currentDelivery.company_name : '') + '" placeholder="会社名を入力" autocomplete="off">' +
+      '<input type="hidden" id="f_delivery_point_id" value="' + (state.header.delivery_point_id || '') + '">' +
+      '</div>' +
       '</div>';
   }
 
   function renderProjectInfoFields_(def) {
-    return '<div class="form-grid">' +
+    const hasProductSku = def.projectInfoFields.some(function (f) { return f.key === 'product_sku'; });
+    let html = '<div class="form-grid">' +
       def.projectInfoFields.map(function (f) {
         const val = state.projectInfo[f.key] || '';
         if (f.type === 'select') {
@@ -290,16 +355,32 @@ const OrderFormPage = (function () {
           }).join('');
           return '<div><label>' + f.label + '</label><select data-pi-field="' + f.key + '"><option value="">未選択</option>' + opts + '</select></div>';
         }
-        return '<div><label>' + f.label + '</label><input type="text" data-pi-field="' + f.key + '" value="' + escapeHtml(val) + '" placeholder="' + (f.placeholder || '') + '"></div>';
+        const autocompleteAttr = f.key === 'product_sku' ? ' data-pi-autocomplete="product"' : '';
+        return '<div><label>' + f.label + '</label><input type="text" data-pi-field="' + f.key + '" value="' + escapeHtml(val) + '" placeholder="' + (f.placeholder || '') + '"' + autocompleteAttr + '></div>';
       }).join('') +
       '</div>';
+    if (hasProductSku && state.orderType !== 'MATERIAL') {
+      html += '<div style="margin-top:10px;"><button class="btn btn--sm" id="btnRegisterProduct" title="現在入力中の製品品番・製品名を自社製品マスタに登録します">この製品をマスタに登録</button></div>';
+    }
+    return html;
   }
 
   function renderRemarksFields_(def) {
-    return def.remarksFields.map(function (f) {
+    let html = def.remarksFields.map(function (f) {
       const val = state.remarks[f.key] || '';
       return '<div style="margin-bottom:10px;"><label>' + f.label + '</label><textarea rows="2" data-remarks-field="' + f.key + '">' + escapeHtml(val) + '</textarea></div>';
     }).join('');
+
+    if (state.orderType === 'MATERIAL' || state.orderType === 'FABRIC') {
+      html += '<div class="card" style="background:#F5F6F8; border-style:dashed;">' +
+        '<div class="text-muted" style="font-size:12.5px; margin-bottom:4px;">以下はPDFに自動で印字されます（入力不要）</div>' +
+        '<div>生地の表裏は必ず分かるように表示してください。</div>' +
+        '<div>※出荷明細を出荷日に必ずFAXまたは担当者にメール連絡をお願い致します。</div>' +
+        '<div>※出荷伝票/請求伝票に必ず本発注書下部の使用品番と発注No.を明記して下さい。</div>' +
+        '</div>';
+    }
+
+    return html;
   }
 
   function renderLinesTable_(def) {
@@ -311,11 +392,14 @@ const OrderFormPage = (function () {
       '</tr></thead><tbody>';
 
     state.lines.forEach(function (line, idx) {
+      const registerBtn = state.orderType === 'MATERIAL'
+        ? '<button class="btn btn--sm" data-register-material="' + idx + '" title="この行の資材品番・資材名・規格・単位・標準単価を資材マスタに登録します">マスタ登録</button>'
+        : '';
       html += '<tr draggable="true" data-line-idx="' + idx + '">' +
         '<td class="drag-handle" title="ドラッグで並び替え">⠿</td>' +
         '<td>' + (idx + 1) + '</td>' +
         cols.map(function (c) { return renderLineCell_(c, line, idx, def); }).join('') +
-        '<td class="btn-row"><button class="btn btn--sm" data-copy-line="' + idx + '" title="複製">複製</button><button class="btn btn--sm btn--danger" data-delete-line="' + idx + '" title="削除">削除</button></td>' +
+        '<td class="btn-row">' + registerBtn + '<button class="btn btn--sm" data-copy-line="' + idx + '" title="複製">複製</button><button class="btn btn--sm btn--danger" data-delete-line="' + idx + '" title="削除">削除</button></td>' +
         '</tr>';
     });
 
@@ -332,7 +416,7 @@ const OrderFormPage = (function () {
   function renderLineCell_(col, line, idx, def) {
     if (col.type === 'computed') {
       const val = line[col.key] || 0;
-      return '<td class="text-right mono">' + formatNumber_(val) + '</td>';
+      return '<td class="text-right mono" data-computed-line="' + idx + '" data-computed-key="' + col.key + '">' + formatNumber_(val) + '</td>';
     }
     if (col.type === 'size_grid') {
       let sizeQty = {};
@@ -352,8 +436,12 @@ const OrderFormPage = (function () {
   }
 
   function renderAttachments_() {
-    let html = '<div class="btn-row" style="margin-bottom:10px;">' +
-      '<input type="file" id="attachmentInput" accept="image/*,application/pdf" ' + (state.orderId ? '' : 'disabled title="先に保存して発注番号を確定してください"') + '>' +
+    let html = '';
+    if (!state.orderId) {
+      html += '<div class="restore-banner" style="margin-bottom:10px;"><span>先に画面下部の「保存」を押して発注番号を確定すると、添付ファイルをアップロードできるようになります。</span></div>';
+    }
+    html += '<div class="btn-row" style="margin-bottom:10px;">' +
+      '<input type="file" id="attachmentInput" accept="image/*,application/pdf" ' + (state.orderId ? '' : 'disabled') + '>' +
       '</div>';
     if (state.attachments.length === 0) {
       html += '<div class="text-muted">添付ファイルはありません</div>';
@@ -382,15 +470,60 @@ const OrderFormPage = (function () {
       });
     });
 
-    const fields = ['order_date', 'due_date', 'supplier_id', 'employee_id', 'delivery_point_id'];
-    fields.forEach(function (key) {
+    const simpleFields = ['order_date', 'due_date', 'employee_id'];
+    simpleFields.forEach(function (key) {
       const el = document.getElementById('f_' + key);
       if (!el) return;
       el.addEventListener('change', function () {
         state.header[key] = el.value;
-        if (key === 'supplier_id') refreshSupplierContacts_(container);
         persistLocalDraft_();
       });
+    });
+
+    // 発注先: オートコンプリート付きテキスト入力
+    const supplierSearchEl = document.getElementById('f_supplier_search');
+    const supplierIdEl = document.getElementById('f_supplier_id');
+    attachMasterAutocomplete_(
+      supplierSearchEl,
+      function (keyword) { return Api.call('listSuppliers', { keyword: keyword }).then(function (d) { return d.items; }); },
+      function (item) { return item.company_name + (item.usage_count_90d > 0 ? '（よく使用）' : ''); },
+      function (item) {
+        supplierSearchEl.value = item.company_name;
+        supplierIdEl.value = item.supplier_id;
+        state.header.supplier_id = item.supplier_id;
+        state.header.supplier_contact_id = '';
+        refreshSupplierContacts_(container);
+        persistLocalDraft_();
+      }
+    );
+    // 手入力のみで候補を選ばなかった場合は、確定した会社名として登録できるよう変更を許容する
+    // （選択されていなければ supplier_id は空のまま。保存時にバリデーションで検知される）
+    supplierSearchEl.addEventListener('input', function () {
+      if (supplierSearchEl.value !== (state.masters.suppliers.find(function (s) { return s.supplier_id === supplierIdEl.value; }) || {}).company_name) {
+        supplierIdEl.value = '';
+        state.header.supplier_id = '';
+      }
+    });
+
+    // 納品先: オートコンプリート付きテキスト入力
+    const deliverySearchEl = document.getElementById('f_delivery_search');
+    const deliveryIdEl = document.getElementById('f_delivery_point_id');
+    attachMasterAutocomplete_(
+      deliverySearchEl,
+      function (keyword) { return Api.call('listDeliveryPoints', { keyword: keyword }).then(function (d) { return d.items; }); },
+      function (item) { return item.company_name + (item.address ? '（' + item.address + '）' : ''); },
+      function (item) {
+        deliverySearchEl.value = item.company_name;
+        deliveryIdEl.value = item.delivery_point_id;
+        state.header.delivery_point_id = item.delivery_point_id;
+        persistLocalDraft_();
+      }
+    );
+    deliverySearchEl.addEventListener('input', function () {
+      if (deliverySearchEl.value !== (state.masters.deliveryPoints.find(function (d) { return d.delivery_point_id === deliveryIdEl.value; }) || {}).company_name) {
+        deliveryIdEl.value = '';
+        state.header.delivery_point_id = '';
+      }
     });
 
     if (state.header.supplier_id) refreshSupplierContacts_(container);
@@ -424,6 +557,43 @@ const OrderFormPage = (function () {
         persistLocalDraft_();
       });
     });
+
+    const productSkuEl = container.querySelector('[data-pi-autocomplete="product"]');
+    if (productSkuEl) {
+      attachMasterAutocomplete_(
+        productSkuEl,
+        function (keyword) { return Api.call('listProducts', { keyword: keyword }).then(function (d) { return d.items; }); },
+        function (item) { return item.product_sku + '　' + item.product_name; },
+        function (item) {
+          state.projectInfo.product_sku = item.product_sku;
+          state.projectInfo.product_name = item.product_name;
+          state.projectInfo.material_ratio = item.material_ratio || state.projectInfo.material_ratio;
+          persistLocalDraft_();
+          renderForm_(container);
+        }
+      );
+    }
+
+    const registerBtn = document.getElementById('btnRegisterProduct');
+    if (registerBtn) {
+      registerBtn.addEventListener('click', function () {
+        const sku = state.projectInfo.product_sku;
+        const name = state.projectInfo.product_name;
+        if (!sku) { Toast.error('製品品番を入力してください'); return; }
+        registerBtn.disabled = true;
+        Api.call('createProduct', {
+          product_sku: sku,
+          product_name: name || '',
+          material_ratio: state.projectInfo.material_ratio || ''
+        }).then(function () {
+          Toast.success('自社製品マスタに登録しました: ' + sku);
+          registerBtn.disabled = false;
+        }).catch(function (e) {
+          Toast.error('登録に失敗しました: ' + e.message);
+          registerBtn.disabled = false;
+        });
+      });
+    }
   }
 
   function bindRemarksEvents_(container, def) {
@@ -481,6 +651,29 @@ const OrderFormPage = (function () {
       renderForm_(container);
     });
 
+    container.querySelectorAll('[data-register-material]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = Number(btn.getAttribute('data-register-material'));
+        const line = state.lines[idx];
+        if (!line.material_sku) { Toast.error('資材品番を入力してください'); return; }
+        btn.disabled = true;
+        Api.call('createMaterial', {
+          maker: line.maker || '',
+          material_sku: line.material_sku,
+          material_name: line.material_name || '',
+          spec: line.spec || '',
+          default_unit: line.unit || '',
+          standard_unit_price: Number(line.unit_price) || 0
+        }).then(function () {
+          Toast.success('資材マスタに登録しました: ' + line.material_sku);
+          btn.disabled = false;
+        }).catch(function (e) {
+          Toast.error('登録に失敗しました: ' + e.message);
+          btn.disabled = false;
+        });
+      });
+    });
+
     container.querySelectorAll('[data-copy-line]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         const idx = Number(btn.getAttribute('data-copy-line'));
@@ -508,8 +701,16 @@ const OrderFormPage = (function () {
   }
 
   function refreshComputedCellsOnly_(container, def) {
-    // 金額等の計算列だけ再描画すると入力中のフォーカスが飛ばないため、
-    // 実装をシンプルにする方針により、ここでは合計金額表示のみ更新する。
+    // 入力中のフォーカスを飛ばさないよう、DOM全体は再描画せず、
+    // 金額など計算結果のセルと合計金額表示だけをピンポイントで書き換える。
+    def.lineColumns.forEach(function (col) {
+      if (col.type !== 'computed') return;
+      state.lines.forEach(function (line, idx) {
+        const cell = container.querySelector('[data-computed-line="' + idx + '"][data-computed-key="' + col.key + '"]');
+        if (cell) cell.textContent = formatNumber_(line[col.key] || 0);
+      });
+    });
+
     const totalEl = container.querySelector('.text-right[style*="font-weight:700"]');
     if (totalEl) totalEl.textContent = '合計金額: ' + formatNumber_(sumAmount_()) + ' 円';
   }
