@@ -116,7 +116,10 @@ const MasterPage = (function () {
           '<td>' + (s.last_used_at ? escapeHtml(s.last_used_at.substring(0, 10)) : '-') + '</td>' +
           '<td>' + s.usage_count_90d + '</td>' +
           '<td>' + (s.source === 'MYBRIDGE' ? 'myBridge' : '手動') + '</td>' +
-          '<td><button class="btn btn--sm" data-view-contacts="' + s.supplier_id + '">担当者一覧</button></td>' +
+          '<td class="btn-row">' +
+          '<button class="btn btn--sm" data-view-contacts="' + s.supplier_id + '">担当者一覧</button>' +
+          '<button class="btn btn--sm" data-copy-to-delivery="' + s.supplier_id + '" title="この会社を納品先マスタにも登録します">納品先としても登録</button>' +
+          '</td>' +
           '</tr>' +
           '<tr class="contacts-row" id="contacts-' + s.supplier_id + '" style="display:none;"><td colspan="5"></td></tr>';
       });
@@ -140,13 +143,40 @@ const MasterPage = (function () {
               return;
             }
             cell.innerHTML = data.items.map(function (c) {
-              return '<div style="padding:4px 0; border-bottom:1px solid #eee;">' +
-                '<strong>' + escapeHtml(c.contact_name) + '</strong>' +
+              return '<div style="padding:4px 0; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center;">' +
+                '<span><strong>' + escapeHtml(c.contact_name) + '</strong>' +
                 (c.title ? '（' + escapeHtml(c.title) + '）' : '') +
                 ' ' + escapeHtml(c.department || '') +
-                '<br><span class="text-muted">' + escapeHtml(c.email || '') + ' / ' + escapeHtml(c.tel || '') + '</span>' +
+                '<br><span class="text-muted">' + escapeHtml(c.email || '') + ' / ' + escapeHtml(c.tel || '') + '</span></span>' +
+                '<button class="btn btn--sm" data-copy-contact-to-delivery="' + c.contact_id + '" data-supplier="' + supplierId + '" title="この担当者の住所・TELで納品先を登録します">この担当者で納品先登録</button>' +
                 '</div>';
             }).join('');
+            cell.querySelectorAll('[data-copy-contact-to-delivery]').forEach(function (copyBtn) {
+              copyBtn.addEventListener('click', function () {
+                copyBtn.disabled = true;
+                Api.call('createDeliveryPointFromSupplier', {
+                  supplier_id: copyBtn.getAttribute('data-supplier'),
+                  contact_id: copyBtn.getAttribute('data-copy-contact-to-delivery')
+                }).then(function () {
+                  Toast.success('納品先マスタに登録しました');
+                }).catch(function (e) {
+                  Toast.error('登録に失敗しました: ' + e.message);
+                  copyBtn.disabled = false;
+                });
+              });
+            });
+          });
+        });
+      });
+
+      listEl.querySelectorAll('[data-copy-to-delivery]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          btn.disabled = true;
+          Api.call('createDeliveryPointFromSupplier', { supplier_id: btn.getAttribute('data-copy-to-delivery') }).then(function () {
+            Toast.success('納品先マスタに登録しました（住所・TELは空欄のため、必要であれば納品先タブから編集してください）');
+          }).catch(function (e) {
+            Toast.error('登録に失敗しました: ' + e.message);
+            btn.disabled = false;
           });
         });
       });
