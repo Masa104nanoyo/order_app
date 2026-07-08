@@ -16,7 +16,6 @@ const OrderTypeDefs = {
     ],
     remarksFields: [
       { key: 'shipping_contact_method', label: '出荷明細の連絡方法' },
-      { key: 'fabric_face_back_note', label: '生地表裏の表示依頼' },
       { key: 'slip_notes', label: '伝票記載事項' },
       { key: 'other', label: 'その他備考' }
     ],
@@ -99,7 +98,6 @@ const OrderTypeDefs = {
     ],
     remarksFields: [
       { key: 'fabric_defect_pin_note', label: '生地キズ・ピン打ち指示' },
-      { key: 'fabric_face_back_note', label: '生地表裏の表示' },
       { key: 'remnant_return_note', label: '残反返却指示' },
       { key: 'other', label: 'その他備考' }
     ],
