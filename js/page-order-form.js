@@ -15,7 +15,7 @@ const OrderFormPage = (function () {
     remarks: {},
     lines: [],
     attachments: [],
-    masters: { suppliers: [], deliveryPoints: [], employees: [], materials: [], products: [] },
+    masters: { partners: [], employees: [], materials: [], products: [] },
     serverUpdatedAt: null,
     localSavedAt: null
   };
@@ -30,17 +30,15 @@ const OrderFormPage = (function () {
     container.innerHTML = '<div class="empty-state"><span class="spinner"></span> 読み込み中...</div>';
 
     Promise.all([
-      Api.call('listSuppliers', {}),
-      Api.call('listDeliveryPoints', {}),
+      Api.call('listBusinessPartners', {}),
       Api.call('listEmployees', {}),
       state.orderId ? Api.call('getOrder', { order_id: state.orderId }) : Promise.resolve(null)
     ]).then(function (results) {
-      state.masters.suppliers = results[0].items;
-      state.masters.deliveryPoints = results[1].items;
-      state.masters.employees = results[2].items;
+      state.masters.partners = results[0].items;
+      state.masters.employees = results[1].items;
 
-      if (results[3]) {
-        applyOrderToState_(results[3]);
+      if (results[2]) {
+        applyOrderToState_(results[2]);
       } else {
         resetStateForNew_(state.orderType);
       }
@@ -325,8 +323,8 @@ const OrderFormPage = (function () {
       return '<option value="' + e.employee_id + '"' + (e.employee_id === state.header.employee_id ? ' selected' : '') + '>' + escapeHtml(e.employee_name) + '</option>';
     }).join('');
 
-    const currentSupplier = state.masters.suppliers.find(function (s) { return s.supplier_id === state.header.supplier_id; });
-    const currentDelivery = state.masters.deliveryPoints.find(function (d) { return d.delivery_point_id === state.header.delivery_point_id; });
+    const currentSupplier = state.masters.partners.find(function (s) { return s.partner_id === state.header.supplier_id; });
+    const currentDelivery = state.masters.partners.find(function (d) { return d.partner_id === state.header.delivery_point_id; });
 
     return '<div class="form-grid">' +
       '<div><label>発注日</label><input type="date" id="f_order_date" value="' + (state.header.order_date || '') + '"></div>' +
@@ -480,17 +478,17 @@ const OrderFormPage = (function () {
       });
     });
 
-    // 発注先: オートコンプリート付きテキスト入力
+    // 発注先: オートコンプリート付きテキスト入力（取引先マスタを検索）
     const supplierSearchEl = document.getElementById('f_supplier_search');
     const supplierIdEl = document.getElementById('f_supplier_id');
     attachMasterAutocomplete_(
       supplierSearchEl,
-      function (keyword) { return Api.call('listSuppliers', { keyword: keyword }).then(function (d) { return d.items; }); },
+      function (keyword) { return Api.call('listBusinessPartners', { keyword: keyword }).then(function (d) { return d.items; }); },
       function (item) { return item.company_name + (item.usage_count_90d > 0 ? '（よく使用）' : ''); },
       function (item) {
         supplierSearchEl.value = item.company_name;
-        supplierIdEl.value = item.supplier_id;
-        state.header.supplier_id = item.supplier_id;
+        supplierIdEl.value = item.partner_id;
+        state.header.supplier_id = item.partner_id;
         state.header.supplier_contact_id = '';
         refreshSupplierContacts_(container);
         persistLocalDraft_();
@@ -499,28 +497,28 @@ const OrderFormPage = (function () {
     // 手入力のみで候補を選ばなかった場合は、確定した会社名として登録できるよう変更を許容する
     // （選択されていなければ supplier_id は空のまま。保存時にバリデーションで検知される）
     supplierSearchEl.addEventListener('input', function () {
-      if (supplierSearchEl.value !== (state.masters.suppliers.find(function (s) { return s.supplier_id === supplierIdEl.value; }) || {}).company_name) {
+      if (supplierSearchEl.value !== (state.masters.partners.find(function (s) { return s.partner_id === supplierIdEl.value; }) || {}).company_name) {
         supplierIdEl.value = '';
         state.header.supplier_id = '';
       }
     });
 
-    // 納品先: オートコンプリート付きテキスト入力
+    // 納品先: オートコンプリート付きテキスト入力（同じ取引先マスタを検索。発注先とは別の会社を選べる）
     const deliverySearchEl = document.getElementById('f_delivery_search');
     const deliveryIdEl = document.getElementById('f_delivery_point_id');
     attachMasterAutocomplete_(
       deliverySearchEl,
-      function (keyword) { return Api.call('listDeliveryPoints', { keyword: keyword }).then(function (d) { return d.items; }); },
-      function (item) { return item.company_name + (item.address ? '（' + item.address + '）' : ''); },
+      function (keyword) { return Api.call('listBusinessPartners', { keyword: keyword }).then(function (d) { return d.items; }); },
+      function (item) { return item.company_name + (item.address ? '（' + item.address + '）' : '（住所未登録）'); },
       function (item) {
         deliverySearchEl.value = item.company_name;
-        deliveryIdEl.value = item.delivery_point_id;
-        state.header.delivery_point_id = item.delivery_point_id;
+        deliveryIdEl.value = item.partner_id;
+        state.header.delivery_point_id = item.partner_id;
         persistLocalDraft_();
       }
     );
     deliverySearchEl.addEventListener('input', function () {
-      if (deliverySearchEl.value !== (state.masters.deliveryPoints.find(function (d) { return d.delivery_point_id === deliveryIdEl.value; }) || {}).company_name) {
+      if (deliverySearchEl.value !== (state.masters.partners.find(function (d) { return d.partner_id === deliveryIdEl.value; }) || {}).company_name) {
         deliveryIdEl.value = '';
         state.header.delivery_point_id = '';
       }
@@ -627,6 +625,27 @@ const OrderFormPage = (function () {
       if (el.getAttribute('data-autocomplete')) {
         attachAutocomplete_(el, el.getAttribute('data-autocomplete'), def);
       }
+      // 資材のカラー欄: 入力確定時（blur）に、資材マスタのサイズ・カラー別単価を自動検索して反映する
+      if (state.orderType === 'MATERIAL' && el.getAttribute('data-field-key') === 'color') {
+        el.addEventListener('blur', function () {
+          const idx = Number(el.getAttribute('data-line-field'));
+          const line = state.lines[idx];
+          if (!line.material_id) return; // マスタから選んだ資材でなければバリエーション検索はしない
+          Api.call('findMaterialPrice', { material_id: line.material_id, color: line.color || '', size: '' })
+            .then(function (result) {
+              state.lines[idx].unit_price = result.unit_price;
+              def.calcLine(state.lines[idx]);
+              persistLocalDraft_();
+              refreshComputedCellsOnly_(container, def);
+              const priceInput = container.querySelector('[data-line-field="' + idx + '"][data-field-key="unit_price"]');
+              if (priceInput) priceInput.value = result.unit_price;
+              if (result.matched_variant) {
+                Toast.info('カラーに応じた単価を自動反映しました');
+              }
+            })
+            .catch(function () { /* バリエーション未登録の資材は無視して手入力単価のまま */ });
+        });
+      }
     });
 
     // サイズ別数量グリッド（製品加工発注）
@@ -664,8 +683,21 @@ const OrderFormPage = (function () {
           spec: line.spec || '',
           default_unit: line.unit || '',
           standard_unit_price: Number(line.unit_price) || 0
-        }).then(function () {
+        }).then(function (result) {
+          state.lines[idx].material_id = result.material_id;
+          // カラーが入力されていれば、そのカラーのバリエーション単価としても登録する
+          if (line.color) {
+            return Api.call('createMaterialVariant', {
+              material_id: result.material_id,
+              size: '',
+              color: line.color,
+              unit_price: Number(line.unit_price) || 0
+            }).then(function () {
+              Toast.success('資材マスタに登録しました（カラー: ' + line.color + ' の単価も登録）: ' + line.material_sku);
+            });
+          }
           Toast.success('資材マスタに登録しました: ' + line.material_sku);
+        }).then(function () {
           btn.disabled = false;
         }).catch(function (e) {
           Toast.error('登録に失敗しました: ' + e.message);
@@ -790,6 +822,7 @@ const OrderFormPage = (function () {
         line.addEventListener('mousedown', function () {
           const idx = Number(inputEl.getAttribute('data-line-field'));
           if (kind === 'material') {
+            state.lines[idx].material_id = item.material_id;
             state.lines[idx].material_sku = item.material_sku;
             state.lines[idx].material_name = item.material_name;
             state.lines[idx].maker = item.maker;
@@ -921,7 +954,7 @@ const OrderFormPage = (function () {
 
   function handlePreview_() {
     const def = getOrderTypeDef(state.orderType);
-    const supplier = state.masters.suppliers.find(function (s) { return s.supplier_id === state.header.supplier_id; });
+    const supplier = state.masters.partners.find(function (s) { return s.partner_id === state.header.supplier_id; });
     const win = window.open('', '_blank');
     win.document.write(
       '<html><head><meta charset="UTF-8"><title>印刷イメージ</title></head><body style="font-family:sans-serif;padding:20px;">' +
@@ -946,7 +979,7 @@ const OrderFormPage = (function () {
   }
 
   function handleMailCompose_() {
-    const supplier = state.masters.suppliers.find(function (s) { return s.supplier_id === state.header.supplier_id; });
+    const supplier = state.masters.partners.find(function (s) { return s.partner_id === state.header.supplier_id; });
     Api.call('listSupplierContacts', { supplier_id: state.header.supplier_id }).then(function (data) {
       const contact = data.items.find(function (c) { return c.contact_id === state.header.supplier_contact_id; });
       const to = contact ? contact.email : '';
